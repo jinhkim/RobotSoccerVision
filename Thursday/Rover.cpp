@@ -1,0 +1,134 @@
+#include "Rover.h"
+#define PI 3.14159265
+#include "HeadingRange.h"
+#include "Obstacle.h"
+#include "Line2D.h"
+#include "Point2D.h"
+#include <iostream>
+using namespace std;
+#include <math.h>
+
+Rover::Rover(void)
+{
+	this->taskStatus = 0;
+	this->intermediateStatus = false;
+	this->ballStatus = false;
+	this->endLineStatus = false;
+}
+
+Rover::~Rover(void)
+{
+
+}
+
+
+Rover::Rover(Point2D a, double b){ // Takes in Point2D [this->coordinate] and double [Direction]
+	this->coordinate = a;
+	this->direction = b;
+	this->taskStatus = 0;
+	this->intermediateStatus = false;
+	this->ballStatus = false;
+	this->endLineStatus = false;
+}
+
+double Rover::calcRange(Point2D a, Point2D b){
+	return sqrt(pow((a.x-b.x),2)+pow((a.y-b.y),2));
+}
+
+
+		
+
+HeadingRange Rover::calcHeading(Point2D dstCord, Point2D srcCord, double roverAngle){
+		
+		HeadingRange headingrange;
+		bool otherway;
+		double opposite;
+		double adjacent;
+		opposite = dstCord.y - srcCord.y;
+		adjacent = dstCord.x - srcCord.x;
+
+		//watch for NaN. NaN = in original coordinates.
+		if (opposite == 0 && adjacent ==0){
+			headingrange.heading = 0;
+		} 
+		if(opposite == 0)
+			opposite++;
+		if(adjacent == 0)
+			adjacent++;
+
+		//if(srcCord.x == dstCord.x)
+		//	|| srcCord.y == dstCord.y)
+		//	headingrange.heading = 0;
+
+
+		//the sign of opposite and adjacent
+		bool oSign = opposite >= 0; 
+		bool aSign = adjacent >= 0;
+
+		double atanValue = abs(180.0*abs(atan(opposite/adjacent))/PI);
+
+
+		
+		double travelAngle;
+		//determine which quadrant the incident ray lies in
+		//quad I
+		if (oSign==true  && aSign==true ) {
+			travelAngle = atanValue;
+			//quad II
+		} else if (oSign==true  && aSign==false) {
+			travelAngle = 180.0 - atanValue;
+			//quad III
+		} else if (oSign==false && aSign==false) {
+			travelAngle = 180.0 + atanValue;
+			//quad four
+		} else { //oSign==false && aSign==true 
+			travelAngle = 360.0 - atanValue;
+		}
+		
+		if(abs(travelAngle-roverAngle) > 180){
+			otherway=true;				
+		}
+		else{
+			otherway=false;
+		}
+
+		if(travelAngle>roverAngle && !otherway){
+			headingrange.heading = (travelAngle - roverAngle);  // CCW, less than 180 deg.
+		}
+		else if(travelAngle>roverAngle && otherway) // CW, greater than 180 deg.
+		{
+			headingrange.heading = -(360.0-abs(travelAngle - roverAngle));
+		}
+		else if(travelAngle<roverAngle && !otherway){
+			headingrange.heading = (travelAngle - roverAngle); // CW, less than 180 deg.
+		}
+		else{  // travelAngle<roverAngle && otherway
+			headingrange.heading = (360.0-abs(travelAngle - roverAngle)); // CCW, greater than 180 deg. 
+		}
+
+		headingrange.range = calcRange(srcCord, dstCord);
+		//headingrange.heading = -headingrange.heading;
+		//cout << headingrange.range << " is Range and Heading is:"<< headingrange.heading <<"\n";
+		return headingrange;
+}
+
+
+bool Rover::checkIntersect(Obstacle bottle, Line2D path){
+		if((path.ptLineDist(bottle.obstacleCoordinate)>bottle.radius)){
+			return false;
+		}
+		return true;
+}
+
+HeadingRange Rover::obstacleAvoidance(Obstacle bottle, Point2D destination){
+		/* Initiate incremental angle, path of intersection and intermediate this->coordinate*/
+	double hypotenous = this->coordinate.distance(bottle.obstacleCoordinate);
+	double testAngle = 180.0*asin( bottle.radius / hypotenous )/PI;
+	
+	double testRange = bottle.radius / tan(testAngle*PI/180.0);
+	 testAngle = testAngle + tan((bottle.obstacleCoordinate.y-this->coordinate.y)/(bottle.obstacleCoordinate.x - this->coordinate.x));
+	HeadingRange intermediate(testAngle, testRange);
+	//cout<<"Obstacle Angle is " << testAngle <<" and Range is "<< testRange <<"\n";
+
+	return intermediate;
+}

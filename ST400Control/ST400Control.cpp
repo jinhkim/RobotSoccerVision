@@ -1,0 +1,195 @@
+#include "stdio.h"
+#include "tchar.h"
+#include "rt.h"
+
+#define __RMV856_TRIGGER_SEQUENCE_ENABLE
+#include "ST400NT.h"
+
+//Struct for MotorData from Thursday
+struct MotorData{
+	double leftWheel;				//Steps motors must travel
+	double rightWheel;
+	int stop;						//Command from Thursday to end current motion
+};
+
+struct MotorData ST400;
+
+//CProcess p("C:\\March01\\Debug\\Thursday.exe",
+//	NORMAL_PRIORITY_CLASS,			// priority
+//	OWN_WINDOW,						// process has its own window					
+//	ACTIVE							// process is active immediately
+//	);
+
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+
+	/*------------------------Constants---------------------------------------------------------*/
+
+	CPipe motor("MotorData",1024);
+	CPipe motionComplete("Stopped",1024);
+	char* address1 = "0";		//corresponds to motor driver 1 on ST400
+	char* address2 = "3";		//motor driver 3
+	int slew_rate = 400;		//This is the maximum step rate (range is 16 to 8500 steps/sec)
+	int first_rate = 100;		//This is the initial step rate (range is 16 to 8500 steps/sec)
+	int accel = 1;				//This is the acceleration rate (range is 0 to 255 steps/sec^2)
+	int current = 300;			//Motor winding current in mAs
+	int port = 3;				//Port number varies depending on the computer used.  
+								//Check Device Manager for proper port assignment.
+	int RightWheelDone = 0;		//Bit 7 set to 1 when motor movement is completed
+	int	LeftWheelDone = 0;
+	int jogSpeed = 500;         // Jog Speed (testing purposes only)
+
+	/*------------------------------------------------------------------------------------------*/
+
+	//Attempt to open the bluetooth port to begin sending commands.
+	while(PortOpen(port, 9600)!=1)
+	{
+		char* error = ::RMVGetErrorMessage();
+		printf("Port not opened.  Error=%s\n",error);
+		Sleep(1000);
+	}
+
+	printf("Port successfully opened\n");
+
+
+	//Initialize the stepper motors
+	MotorStationsInit();
+
+
+	//Configure the motors to half-step mode
+	if(MotorConfigureMode(address1,1)!=1 || MotorConfigureMode(address2,1)!=1)
+	{
+		//An error has occured.  Display the RMV error message to determine the error.
+		char* error = ::RMVGetErrorMessage();
+		printf("Configure error=%s\n",error);
+	}
+
+
+	//Initialize the slew rate, first rate and acceleration
+	if(MotorSpeed(  address1, slew_rate, first_rate,  accel )!=1  || 
+		MotorSpeed(  address2, slew_rate, first_rate,  accel )!=1)
+	{
+		//An error has occured.  Display the RMV error message to determine the error.
+		char* error = ::RMVGetErrorMessage();
+		printf("Motor Speed error=%s\n",error);
+	}
+
+
+	if ( MotorSetCurrent(address1, current )!=1  ||  MotorSetCurrent(address2,current)!=1)
+    {
+		//An error has occured.  Display the RMV error message to determine the error.
+		char* error = ::RMVGetErrorMessage();
+		printf("Set Current error = %s\n",error);
+	} else {
+		printf("\nMotor Current set to: %d",current);
+	}
+
+
+
+
+
+
+	//Main motor control loop.  Read step instructions sent by Thursday and perform them.
+	while(1){
+
+		
+		//Await instructions from Trajectory Planning program (Thursday).		
+
+		motor.Read(&ST400,sizeof(ST400));
+		cout << "Steps (right, left) = "<< ST400.rightWheel << "\t"<<ST400.leftWheel << endl;
+
+
+
+		//Set the number of steps the motors must travel.
+		if(MotorNumberStepRel( address1 , -ST400.leftWheel)!=1  ||  MotorNumberStepRel( address2 , -ST400.rightWheel)!=1)
+		{
+			//An error has occured.  Display the RMV error message to determine the error.
+			char* error = ::RMVGetErrorMessage();
+			printf("Step setting error=%s\n",error);
+		}
+
+
+		//Put motors in jog mode (testing purposes only)  Comment out MotorNumberStepRel if using.
+		/*MotorJog ( address1, 1 );
+		MotorJog ( address2, 1 );
+		MotorChangeJogSpeed ( address1, jogSpeed);
+		MotorChangeJogSpeed ( address2, jogSpeed));*/
+
+
+
+		//Tell the motors to start executing the received command
+		if(MotorTriggerON(address1)!=1  ||  MotorTriggerON(address2)!=1)
+		{
+			//An error has occured.  Display the RMV error message to determine the error.
+			char* error = ::RMVGetErrorMessage();
+			printf("Trigger on error=%s\n",error);
+		}
+
+
+
+
+		//Loop until current command is completed (bit 7 is set to 1) or an obstacle is detected
+		while(((RightWheelDone & 0x80) != 128) || ((LeftWheelDone & 0x80) != 128)){
+			
+				//Read motor status register to determine if current motion has ended
+				if(MotorGetStatusRegister(address1,&LeftWheelDone)!= 1  ||  
+					MotorGetStatusRegister(address2,&RightWheelDone)!=1)
+				{
+					//An error has occured.  Display the RMV error message to determine the error.
+					char* error = ::RMVGetErrorMessage();
+					printf("Get Status error=%s\n",error);
+				}
+
+				//Check if Thursday has sent data and read it
+				if(motor.TestForData()>=sizeof(ST400))
+				{
+					motor.Read(&ST400,sizeof(ST400));
+				}
+
+			
+				//Check if Thursday has indicated motor motion should stop (i.e. if an obstacle has been 
+				//detected by the IR sensors) and end the current motor motion if it has.
+				if(ST400.stop != 0)
+				{
+					//Stop the current motion
+					if(MotorStop(address1)!=1  || MotorStop(address2)!=1)
+					{
+						//An error has occured.  Display the RMV error message to determine the error.
+						char* error = ::RMVGetErrorMessage();
+						printf("Stop error=%s\n",error);
+					}
+					ST400.stop = 0;
+				
+					//Exit nested while loop
+					break;
+				}
+
+		}
+
+
+		//Send a 1 to Thursday to indicate current instructions are completed.
+		int done=1;
+		motionComplete.Write(&done,sizeof(done));
+
+
+
+		//Reset done variables
+		LeftWheelDone = 0;
+		RightWheelDone = 0;
+
+
+		MotorTriggerOFF(address1);
+		MotorTriggerOFF(address2);
+
+		/*
+		if(MotorPowerOFF(address1)!=1  ||  MotorPowerOFF(address2)!=1)
+		{
+			//An error has occured.  Display the RMV error message to determine the error.
+			char* error = ::RMVGetErrorMessage();
+			printf("error=%s\n",error);
+		}*/
+		
+	}
+}
+
